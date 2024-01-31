@@ -1,0 +1,109 @@
+--How many unique nodes are there on the Data Bank system?
+
+select 
+
+count(distinct NODE_ID)
+
+ from customer_nodes;
+
+ --What is the number of nodes per region?
+ --How many customers are allocated to each region?
+ 
+ select
+ count(node_id) as number_nodes,
+ count(distinct customer_id) as number_customers,
+ region_name
+ 
+  from regions as r 
+ 
+ inner join customer_nodes as c_n on c_n.region_id= r.region_id
+
+ group by region_name
+ 
+ 
+ ;
+
+ --How many days on average are customers reallocated to a different node?
+
+
+with CTE as (
+select *,
+datediff('day', start_date, end_date) as diff,
+row_number() over(partition by customer_id order by start_date asc) as row_number1
+from regions as r 
+
+inner join customer_nodes as c_n on c_n.region_id= r.region_id)
+
+, AGG1 as (
+select 
+
+customer_id,
+
+Sum(diff) as total_days_CUST,
+
+count(distinct node_id) as Number_nodes_CUST
+
+from CTE
+
+where
+
+row_number1 <> 7
+
+group by customer_id)
+
+select
+
+SUM(TOTAL_DAYS_CUST) AS TOTAL_DAYS,
+
+SUM(NUMBER_NODES_CUST) AS TOTAL_NODES,
+
+ROUND(TOTAL_DAYS/ TOTAL_NODES,1) AS AVG_DAYS,
+
+from AGG1
+;
+
+
+--What is the median, 80th and 95th percentile for this same reallocation days metric for each region?
+
+WITH DAYS_IN_NODE AS (
+    SELECT 
+    region_name,
+    customer_id,
+    node_id,
+    SUM(DATEDIFF('days',start_date,end_date)) as days_in_node
+    FROM customer_nodes as C
+    INNER JOIN regions as R on R.REGION_ID = C.region_id
+    WHERE end_date <> '9999-12-31'
+    GROUP BY region_name,
+    customer_id,
+    node_id
+)
+,ORDERED AS (
+SELECT 
+region_name,
+days_in_node,
+ROW_NUMBER() OVER(PARTITION BY region_name ORDER BY days_in_node) as rn
+FROM DAYS_IN_NODE
+)
+,MAX_ROWS as (
+SELECT 
+region_name,
+MAX(rn) as max_rn
+FROM ORDERED
+GROUP BY region_name
+)
+
+SELECT O.region_name
+,CASE 
+WHEN rn = ROUND(M.max_rn /2,0) THEN 'Median'
+WHEN rn = ROUND(M.max_rn * 0.8,0) THEN '80th Percentile'
+WHEN rn = ROUND(M.max_rn * 0.95,0) THEN '95th Percentile'
+END as metric,
+days_in_node as value
+FROM ORDERED as O
+INNER JOIN MAX_ROWS as M on M.region_name = O.region_name
+WHERE rn IN (
+    ROUND(M.max_rn /2,0),
+    ROUND(M.max_rn * 0.8,0),
+     ROUND(M.max_rn * 0.95,0)
+) ;
